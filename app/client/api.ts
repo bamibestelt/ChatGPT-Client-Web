@@ -1,7 +1,7 @@
 import { getClientConfig } from "../config/client";
 import { ACCESS_CODE_PREFIX } from "../constant";
 import { ChatMessage, ModelType, useAccessStore } from "../store";
-import { ChatGPTApi } from "./platforms/openai";
+import { ChatClientApi, ChatGPTApi } from "./platforms/openai";
 
 export const ROLES = ["system", "user", "assistant"] as const;
 export type MessageRole = (typeof ROLES)[number];
@@ -49,6 +49,7 @@ export abstract class LLMApi {
   abstract models(): Promise<LLMModel[]>;
 }
 
+
 type ProviderName = "openai" | "azure" | "claude" | "palm";
 
 interface Model {
@@ -69,6 +70,7 @@ interface ChatProvider {
   chat: () => void;
   usage: () => void;
 }
+
 
 export class ClientApi {
   public llm: LLMApi;
@@ -123,7 +125,6 @@ export class ClientApi {
   }
 }
 
-export const api = new ClientApi();
 
 export function getHeaders() {
   const accessStore = useAccessStore.getState();
@@ -149,3 +150,44 @@ export function getHeaders() {
 
   return headers;
 }
+
+
+
+
+
+// simple provider llm api
+export class ClientCommApi {
+  public llm: LLMCommApi;
+
+  constructor() {
+    this.llm = new ChatClientApi();
+  }
+
+  config() {}
+
+  prompts() {}
+
+  masks() {}
+}
+
+
+//export const api = new ClientApi();
+export const api = new ClientCommApi();
+
+
+// simple prompt model based on pkg: LLMCommApi
+export abstract class LLMCommApi {
+  abstract chat(options: ChatOptions): Promise<void>;
+}
+
+
+export function getSimpleHeaders() {
+  const accessStore = useAccessStore.getState();
+  let headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-requested-with": "XMLHttpRequest",
+  };
+  
+  return headers;
+}
+

@@ -6,7 +6,7 @@ import {
 } from "@/app/constant";
 import { useAccessStore, useAppConfig, useChatStore } from "@/app/store";
 
-import { ChatOptions, getHeaders, LLMApi, LLMModel, LLMUsage } from "../api";
+import { ChatOptions, getHeaders, getSimpleHeaders, LLMApi, LLMCommApi, LLMModel, LLMUsage } from "../api";
 import Locale from "../../locales";
 import {
   EventStreamContentType,
@@ -14,6 +14,7 @@ import {
 } from "@fortaine/fetch-event-source";
 import { prettyObject } from "@/app/utils/format";
 import { getClientConfig } from "@/app/config/client";
+import axios, { AxiosResponse, AxiosError } from 'axios';
 
 export interface OpenAIListModelResponse {
   object: string;
@@ -133,7 +134,7 @@ export class ChatGPTApi implements LLMApi {
               try {
                 const resJson = await res.clone().json();
                 extraInfo = prettyObject(resJson);
-              } catch {}
+              } catch { }
 
               if (res.status === 401) {
                 responseTexts.push(Locale.Error.Unauthorized);
@@ -278,4 +279,126 @@ export class ChatGPTApi implements LLMApi {
     }));
   }
 }
+
+
+
+
+
+// simple api interface
+export class ChatClientApi implements LLMCommApi {
+  private disableListModels = true;
+
+  path(): string {
+    return "https://localhost:7186/llm/prompt";
+  }
+
+  extractMessage(res: any) {
+    return res.choices?.at(0)?.message?.content ?? "";
+  }
+
+  async chat(options: ChatOptions) {
+    const messages = options.messages.map((v) => ({
+      PromptText: v.content,
+    }));
+
+    const modelConfig = {
+      ...useAppConfig.getState().modelConfig,
+      ...useChatStore.getState().currentSession().mask.modelConfig,
+      ...{
+        model: options.config.model,
+      },
+    };
+
+    console.log("[Request] openai payload: ", messages);
+    const lastPrompt = (messages.length > 0) ? messages[messages.length-1] : messages[0]
+    console.log("propmt to be sent: ", messages);
+
+    const controller = new AbortController();
+    options.onController?.(controller);
+
+    try {
+      const chatPath = this.path();
+      const chatPayload = {
+        method: "POST",
+        body: JSON.stringify(lastPrompt),
+        signal: controller.signal,
+        headers: getSimpleHeaders(),
+      };
+
+      // make a fetch request
+      const requestTimeoutId = setTimeout(
+        () => controller.abort(),
+        REQUEST_TIMEOUT_MS,
+      );
+
+      let responseText = "";
+      let finished = false;
+
+      const finish = () => {
+        if (!finished) {
+          options.onFinish(responseText);
+          finished = true;
+        }
+      };
+
+      controller.signal.onabort = finish;
+
+      // todo use axios
+      // Send the POST request
+      console.log('Send POST request with Axios');
+      axios.post(chatPath, chatPayload.body, {
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      }).then((response: AxiosResponse) => {
+          // Handle the response based on the status code
+          if (response.status === 200) {
+            // Request was successful (status code 200)
+            const responseData = response.data;
+            console.log('Response data:', responseData);
+            responseText = responseData.reply;
+            options.onUpdate?.(responseText, '1');
+            return finish();
+          } else {
+            // Handle other status codes if needed
+            console.log('Received status code:', response.status);
+            return options.onError?.(Error(`response status: ${response.status}`))
+          }
+        })
+        .catch((error: AxiosError) => {
+          // Handle errors (e.g., network error, request timeout)
+          if (error.response) {
+            // The request was made, but the server responded with a status code other than 2xx
+            console.error('Error status code:', error.response.status);
+          } else if (error.request) {
+            // The request was made, but no response was received (e.g., network error)
+            console.error('No response received:', error.request);
+          } else {
+            // Something else happened while setting up the request (e.g., request configuration error)
+            console.error('Error:', error.message);
+          }
+          return options.onError?.(error)
+        });
+    } catch (e) {
+      console.log("[Request] failed to make a chat request", e);
+      options.onError?.(e as Error);
+    }
+  }
+
+  async usage() {
+    return {
+      used: 0,
+      total: 0,
+    } as LLMUsage;
+  }
+
+  async models(): Promise<LLMModel[]> {
+    return [{
+      name: "LLMCommApi",
+      available: true,
+    }];
+  }
+}
+
+
 export { OpenaiPath };
